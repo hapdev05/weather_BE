@@ -70,40 +70,43 @@ def check_and_run_if_needed():
     Neu chua → tu dong chay batch forecast.
     Duoc goi khi server start va moi ngay boi scheduler.
     """
-    last_actual = get_last_actual_date()
-    base = datetime.strptime(last_actual, "%Y-%m-%d")
+    # Base the forecast check on today's date, not the last actual data date
+    today = datetime.now().date()
+    base_for_forecast = today.strftime("%Y-%m-%d")
 
     needed_dates = []
     for d in range(1, FORECAST_DAYS + 1):
-        needed_dates.append((base + timedelta(days=d)).strftime("%Y-%m-%d"))
-
-    existing = get_forecast_dates_in_dw()
+        needed_dates.append((today + timedelta(days=d)).strftime("%Y-%m-%d"))
 
     # Check: co du forecast cho tat ca districts cho cac ngay can thiet?
+    # We assume 53 districts are always expected.
+    expected_district_count = len(get_all_districts()) # Dynamically get count
+    
     engine = create_engine(DATABASE_URL)
     missing = False
     with engine.connect() as conn:
         for date_str in needed_dates:
             count = conn.execute(text(f"""
                 SELECT COUNT(DISTINCT fc.district_id)
-                FROM {SCHEMA_DW}.fact_weather_forecast fc
+                FROM {SCHEMA_DW}.fact_weather_forefcast fc
                 JOIN {SCHEMA_DW}.dim_date dt ON dt.date_id = fc.date_id
                 WHERE dt.full_date = CAST(:d AS date)
             """), {"d": date_str}).scalar()
 
-            if count < 53:
+            if count < expected_district_count:
                 missing = True
-                logger.info(f"  Date {date_str}: {count}/53 districts → NEED FORECAST")
+                logger.info(f"  Date {date_str}: {count}/{expected_district_count} districts → NEED FORECAST")
             else:
-                logger.info(f"  Date {date_str}: {count}/53 districts → OK")
+                logger.info(f"  Date {date_str}: {count}/{expected_district_count} districts → OK")
     engine.dispose()
 
     if missing:
-        logger.info(f"Running batch forecast: base={last_actual}, days={FORECAST_DAYS}")
-        return run_batch_forecast(base_date=last_actual, forecast_days=FORECAST_DAYS)
+        logger.info(f"Running batch forecast for dates: {needed_dates}")
+        # Pass today's date as the base for forecasting
+        return run_batch_forecast(base_date=base_for_forecast, forecast_days=FORECAST_DAYS)
     else:
-        logger.info("All forecasts up to date. Skipping.")
-        return {"status": "skipped", "message": "Forecasts already exist", "dates": needed_dates}
+        logger.info("All forecasts up to date for the next days. Skipping.")
+        return {"status": "skipped", "message": "Forecasts already exist for needed dates", "dates": needed_dates}
 
 
 def run_batch_forecast(base_date: str = None, forecast_days: int = FORECAST_DAYS) -> dict:
@@ -111,7 +114,7 @@ def run_batch_forecast(base_date: str = None, forecast_days: int = FORECAST_DAYS
     Predict next `forecast_days` for ALL districts starting from base_date + 1.
     """
     if base_date is None:
-        base_date = get_last_actual_date()
+        base_date = get_last_actual_date() # Fallback to last actual if not provided
 
     base = datetime.strptime(base_date, "%Y-%m-%d")
     districts = get_all_districts()
@@ -168,15 +171,25 @@ def run_batch_forecast(base_date: str = None, forecast_days: int = FORECAST_DAYS
 
 
 def scheduled_daily_forecast():
-    """Called by APScheduler at configured time each day."""
+    """
+    Called by APScheduler at configured time each day (e.g., 00:05).
+    Ensures forecasts for tomorrow and the day after are present.
+    """
     logger.info("=" * 50)
     logger.info("SCHEDULED DAILY FORECAST TRIGGERED")
     logger.info("=" * 50)
     try:
+        logger.info("Checking if forecasts are needed for the next days...")
         result = check_and_run_if_needed()
-        logger.info(f"Result: {result.get('status')} - {result.get('success', 0)} forecasts")
+        status = result.get('status', 'unknown')
+        if status == 'skipped':
+            logger.info(f"Scheduled forecast skipped: {result.get('message')}")
+        elif status == 'completed':
+            logger.info(f"Scheduled forecast completed: {result.get('success', 0)} successful forecasts, {len(result.get('errors', []))} errors.")
+        else:
+            logger.info(f"Scheduled forecast result: {status}")
     except Exception as e:
-        logger.error(f"SCHEDULED FORECAST FAILED: {e}")
+        logger.exception(f"SCHEDULED FORECAST FAILED UNEXPECTEDLY: {e}") # Use exception for full traceback
 
 
 if __name__ == "__main__":

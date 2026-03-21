@@ -21,6 +21,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import logging
+import pytz
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -45,7 +46,8 @@ from predict_weather import weather_desc
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("api")
 
-scheduler = BackgroundScheduler()
+ICT = pytz.timezone("Asia/Ho_Chi_Minh")
+scheduler = BackgroundScheduler(timezone=ICT)
 last_batch_result: dict = {}
 
 SCHEDULE_HOUR = 0
@@ -72,6 +74,7 @@ async def lifespan(app: FastAPI):
         trigger="cron",
         hour=SCHEDULE_HOUR,
         minute=SCHEDULE_MINUTE,
+        timezone=ICT,
         id="daily_forecast",
         replace_existing=True,
     )
