@@ -88,7 +88,7 @@ def check_and_run_if_needed():
         for date_str in needed_dates:
             count = conn.execute(text(f"""
                 SELECT COUNT(DISTINCT fc.district_id)
-                FROM {SCHEMA_DW}.fact_weather_forefcast fc
+                FROM {SCHEMA_DW}.fact_weather_forecast fc
                 JOIN {SCHEMA_DW}.dim_date dt ON dt.date_id = fc.date_id
                 WHERE dt.full_date = CAST(:d AS date)
             """), {"d": date_str}).scalar()
